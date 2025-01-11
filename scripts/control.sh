@@ -82,7 +82,15 @@ sleep 60
 # Verify cluster status
 echo "Checking cluster status..."
 kubectl get nodes
-kubectl get pods --all-namespaces
+kubectl get pods -A
+
+sleep 5
+git clone https://github.com/mialeevs/kubernetes_installation_crio.git
+cd kubernetes_installation_crio/
+kubectl apply -f metrics-server.yaml
+cd ..
+rm -rf kubernetes_installation_crio
+sleep 5
 
 # Setup vagrant user
 sudo -i -u vagrant bash << 'EOF'
@@ -95,5 +103,6 @@ echo "source <(kubectl completion bash)" >> ~/.bashrc
 echo "complete -F __start_kubectl k" >> ~/.bashrc
 echo "alias k=kubectl" >> ~/.bashrc
 echo "alias c=clear" >> ~/.bashrc
+echo "alias ud='sudo apt update -y && sudo apt upgrade -y' >> ~/.bashrc"
 source ~/.profile
 EOF

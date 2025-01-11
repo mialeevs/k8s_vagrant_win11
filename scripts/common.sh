@@ -40,7 +40,8 @@ sudo apt-get install -y \
     curl \
     gnupg2 \
     software-properties-common \
-    jq
+    jq \
+    git
 
 # Configure kernel modules
 cat <<EOF | sudo tee /etc/modules-load.d/crio.conf
