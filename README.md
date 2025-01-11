@@ -9,8 +9,6 @@
 
 > [VMWare Desktop Plugin](https://developer.hashicorp.com/vagrant/docs/providers/vmware/vagrant-vmware-utility)
 
-OR
-
 > [Virtualbox](https://www.virtualbox.org/)
 
 > [Vagrant](https://www.vagrantup.com/)
