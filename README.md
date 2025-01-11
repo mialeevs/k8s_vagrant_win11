@@ -1,25 +1,51 @@
-# Kubernetes Installation on Ubuntu 22.04 with VAGRANT
+# Kubernetes Installation on Ubuntu 22.04
 
-## For Linux OS / Windows 10/11 OS
+## For Linux OS
 
-### Install VMware Workstation(VMware destop plugin) ,Vagrant and Git
+### Install VirtualBox, Vagrant and Git
 
-Install VMWare, Vagrant and Git on the laptop or PC
+Install Virtualbox, Vagrant and Git on the laptop or PC
 
-> [VMWare Workstation](https://access.broadcom.com/default/ui/v1/signin/)
+> [Virtualbox](https://www.virtualbox.org/)
 
 > [Vagrant](https://www.vagrantup.com/)
 
 > [GIT](https://git-scm.com/)
 
+Install the necessary plugins
+
+```bash
+vagrant plugin install vagrant-hostmanager
+```
+
+## For Windows 10/11 OS
+
+### Install VMware Workstation(VMware destop plugin) or VirtualBox, Vagrant and Git
+
+> [VMWare Workstation](https://www.vmware.com/products/workstation-pro.html)
+
 > [VMWare Desktop Plugin](https://developer.hashicorp.com/vagrant/docs/providers/vmware/vagrant-vmware-utility)
 
+OR
+
+> [Virtualbox](https://www.virtualbox.org/)
+
+> [Vagrant](https://www.vagrantup.com/)
+
+> [GIT](https://git-scm.com/)
 
 Install the required plugins for vmwaredesktop
 
 ```bash
 vagrant plugin install vagrant-vmware-desktop
 vagrant plugin install vagrant-hostmanager
+```
+
+Install the required plugins for virtualbox
+
+```bash
+vagrant plugin install vagrant-hostmanager
+
 ```
 
 ### Clone the repository
