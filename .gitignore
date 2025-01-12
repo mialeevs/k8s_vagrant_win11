@@ -83,3 +83,7 @@ lib/vagrant/vagrant_ssl.so
 
 # configs directory
 configs/*
+
+
+# VDI Files
+*.vdi

@@ -1,176 +1,174 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
-# Enhanced Common Setup for Kubernetes Nodes
-# Includes improved error handling, system optimizations, and security features
+# Enhanced Kubernetes Node Setup Script
+# This script performs common setup for both Control Plane and Worker nodes
+# with advanced security features and optimizations.
 
 # Strict error handling
-set -euo pipefail
-trap 'error_handler $? $LINENO' ERR
+set -euxo pipefail
 
 # Global variables
-SETUP_LOG="/var/log/k8s-setup.log"
-CRIO_REGISTRY="pkgs.k8s.io"
-K8S_REGISTRY="pkgs.k8s.io"
+SETUP_LOG=${SETUP_LOG:-"/var/log/k8s-setup.log"}
+TEMP_DIR=$(mktemp -d)
+trap 'rm -rf "${TEMP_DIR}"' EXIT
 
-# Error handling function
+# Enhanced error handling with logging
 error_handler() {
     local exit_code=$1
     local line_number=$2
-    echo "Error occurred in script at line: ${line_number}, exit code: ${exit_code}" | tee -a "${SETUP_LOG}"
+    echo "[ERROR] $(date '+%Y-%m-%d %H:%M:%S') - Error on line ${line_number}: Command exited with status ${exit_code}" | 
+        tee -a "${SETUP_LOG}"
     exit "${exit_code}"
 }
+trap 'error_handler $? $LINENO' ERR
 
-# Function to verify environment variables
-verify_environment() {
-    echo "🔍 Verifying environment variables..." | tee -a "${SETUP_LOG}"
-    
-    local required_vars=("DNS_SERVERS" "KUBERNETES_VERSION" "CRIO_VERSION")
-    for var in "${required_vars[@]}"; do
-        if [ -z "${!var:-}" ]; then
-            echo "❌ Error: Required variable $var is not set" | tee -a "${SETUP_LOG}"
-            exit 1
-        fi
-    done
+# Logging function
+log() {
+    local level=$1
+    shift
+    echo "[${level}] $(date '+%Y-%m-%d %H:%M:%S') - $*" | tee -a "${SETUP_LOG}"
+}
 
-    # Validate Kubernetes version format
-    if ! VERSION="$(echo "${KUBERNETES_VERSION}" | grep -oE '[0-9]+\.[0-9]+')"; then
-        echo "❌ Error: Invalid KUBERNETES_VERSION format" | tee -a "${SETUP_LOG}"
+# Check for root privileges
+if [ "$(id -u)" -ne 0 ] && ! sudo -n true 2>/dev/null; then
+    log "ERROR" "This script must be run with root privileges"
+    exit 1
+fi
+
+# Version validation patterns
+KUBERNETES_VERSION_PATTERN='^v[0-9]+\.[0-9]+$'
+CRIO_VERSION_PATTERN='^v[0-9]+\.[0-9]+$'
+
+# Check required environment variables
+required_vars=(
+    "DNS_SERVERS"
+    "KUBERNETES_VERSION"
+    "CRIO_VERSION"
+    "OS"
+)
+
+for var in "${required_vars[@]}"; do
+    if [ -z "${!var:-}" ]; then
+        log "ERROR" "$var is not set"
         exit 1
     fi
+done
+
+# Validate version formats
+if ! [[ $KUBERNETES_VERSION =~ $KUBERNETES_VERSION_PATTERN ]]; then
+    log "ERROR" "KUBERNETES_VERSION must be in format vX.Y.Z (e.g., v1.30)"
+    exit 1
+fi
+
+if ! [[ $CRIO_VERSION =~ $CRIO_VERSION_PATTERN ]]; then
+    log "ERROR" "CRIO_VERSION must be in format vX.Y (e.g., v1.30)"
+    exit 1
+fi
+
+# Disable swap
+disable_swap() {
+sudo swapoff -a
+(crontab -l 2>/dev/null; echo "@reboot /sbin/swapoff -a") | crontab - || true
 }
 
-# Function to optimize system settings
-optimize_system() {
-    echo "⚙️ Optimizing system settings..." | tee -a "${SETUP_LOG}"
+# Configure DNS settings
+configure_dns() {
+    log "INFO" "Configuring DNS settings..."
     
-    # Kernel parameters optimization
-    cat <<EOF | sudo tee /etc/sysctl.d/99-kubernetes-optimized.conf
-# Network optimization
-net.bridge.bridge-nf-call-iptables  = 1
-net.bridge.bridge-nf-call-ip6tables = 1
-net.ipv4.ip_forward                 = 1
-net.ipv4.tcp_tw_recycle            = 0
-net.ipv4.tcp_tw_reuse              = 1
-net.ipv4.tcp_fin_timeout           = 15
-net.core.somaxconn                 = 32768
-net.core.netdev_max_backlog        = 16384
-net.ipv4.tcp_max_syn_backlog       = 8192
-net.ipv4.tcp_keepalive_time        = 600
-net.ipv4.tcp_keepalive_intvl       = 30
-net.ipv4.tcp_keepalive_probes      = 10
+    if ! echo "$DNS_SERVERS" | grep -qE '^([0-9]{1,3}\.){3}[0-9]{1,3}(,([0-9]{1,3}\.){3}[0-9]{1,3})*$'; then
+        log "ERROR" "Invalid DNS_SERVERS format"
+        exit 1
+    fi
 
-# VM optimization
-vm.swappiness                      = 0
-vm.overcommit_memory              = 1
-vm.panic_on_oom                   = 0
-vm.max_map_count                  = 262144
-
-# File system optimization
-fs.file-max                       = 2097152
-fs.inotify.max_user_instances     = 8192
-fs.inotify.max_user_watches       = 524288
-EOF
-
-    sudo sysctl --system
-
-    # Optimize transparent hugepage settings
-    echo never > /sys/kernel/mm/transparent_hugepage/enabled
-    echo never > /sys/kernel/mm/transparent_hugepage/defrag
-}
-
-# Function to configure networking
-configure_networking() {
-    echo "🌐 Configuring network settings..." | tee -a "${SETUP_LOG}"
-    
-    # DNS configuration
-    sudo mkdir -p /etc/systemd/resolved.conf.d/
+    mkdir -p /etc/systemd/resolved.conf.d/
     cat <<EOF | sudo tee /etc/systemd/resolved.conf.d/dns_servers.conf
 [Resolve]
 DNS=${DNS_SERVERS}
 DNSStubListener=no
-DNSSEC=no
-Cache=yes
-DNSStubListenerExtra=
 EOF
 
-    # Disable swap permanently
-    sudo swapoff -a
-    sudo sed -i '/swap/d' /etc/fstab
-    echo "@reboot /sbin/swapoff -a" | crontab -
+    systemctl restart systemd-resolved
+    systemctl status systemd-resolved --no-pager || true
+}
 
-    # Configure kernel modules
-    cat <<EOF | sudo tee /etc/modules-load.d/k8s-modules.conf
+# Configure container runtime prerequisites
+container_runtime_setup() {
+    log "INFO" "Setting up container runtime prerequisites..."
+    
+    cat <<EOF | sudo tee /etc/modules-load.d/crio.conf
 overlay
 br_netfilter
-ip_tables
-ip6_tables
-nf_nat
-xt_REDIRECT
-xt_owner
-iptable_nat
-iptable_mangle
-iptable_filter
 EOF
 
     # Load kernel modules
-    while read -r module; do
-        sudo modprobe "$module"
-    done < /etc/modules-load.d/k8s-modules.conf
+    for module in overlay br_netfilter; do
+        if ! lsmod | grep -q "^$module"; then
+            log "INFO" "Loading kernel module: $module"
+            modprobe "$module"
+        fi
+    done
+
+    # Configure sysctl parameters
+    cat <<EOF | sudo tee /etc/sysctl.d/99-kubernetes-cri.conf
+net.bridge.bridge-nf-call-iptables = 1
+net.bridge.bridge-nf-call-ip6tables = 1
+net.ipv4.ip_forward = 1
+EOF
+    sysctl --system
 }
 
-# Function to install dependencies
-install_dependencies() {
-    echo "📦 Installing dependencies..." | tee -a "${SETUP_LOG}"
-    
-    local DEBIAN_FRONTEND=noninteractive
-    sudo apt-get update
-    sudo apt-get install -y \
-        apt-transport-https \
-        ca-certificates \
-        curl \
-        gnupg2 \
-        software-properties-common \
-        jq \
-        git \
-        conntrack \
-        ipset \
-        socat \
-        bash-completion \
-        iproute2 \
-        nfs-common \
-        chrony
-}
-
-# Function to install and configure CRI-O
+# Install and configure CRI-O
 install_crio() {
-    echo "🐳 Installing CRI-O..." | tee -a "${SETUP_LOG}"
+    log "INFO" "Installing CRI-O version ${CRIO_VERSION}..."
     
-    # Add CRI-O repository
+    # Use Ubuntu 22.04 repositories for compatibility
+    OS="xUbuntu_22.04"
+    
     sudo mkdir -p /etc/apt/keyrings
-    curl -fsSL "https://${CRIO_REGISTRY}/addons:/cri-o:/stable:/$CRIO_VERSION/deb/Release.key" | \
-        sudo gpg --dearmor -o /etc/apt/keyrings/cri-o-apt-keyring.gpg
+curl -fsSL "https://pkgs.k8s.io/addons:/cri-o:/stable:/$CRIO_VERSION/deb/Release.key" | \
+    sudo gpg --dearmor -o /etc/apt/keyrings/cri-o-apt-keyring.gpg
 
-    echo "deb [signed-by=/etc/apt/keyrings/cri-o-apt-keyring.gpg] https://${CRIO_REGISTRY}/addons:/cri-o:/stable:/$CRIO_VERSION/deb/ /" | \
-        sudo tee /etc/apt/sources.list.d/cri-o.list
+echo "deb [signed-by=/etc/apt/keyrings/cri-o-apt-keyring.gpg] https://pkgs.k8s.io/addons:/cri-o:/stable:/$CRIO_VERSION/deb/ /" | \
+    sudo tee /etc/apt/sources.list.d/cri-o.list
 
-    # Install CRI-O
-    sudo apt-get update
-    sudo apt-get install -y crio
+    # Install CRI-O with retry mechanism
+    for i in {1..5}; do
+        if apt-get update && apt-get install -y cri-o; then
+            log "INFO" "Successfully installed CRI-O"
+            break
+        fi
+        if [ $i -eq 5 ]; then
+            log "ERROR" "Failed to install CRI-O after 5 attempts"
+            exit 1
+        fi
+        log "WARN" "CRI-O installation attempt $i failed. Retrying..."
+        sleep 10
+    done
 
     # Configure CRI-O
-    cat <<EOF | sudo tee /etc/crio/crio.conf.d/02-crio-performance.conf
-[crio]
-storage_driver = "overlay"
-storage_option = ["overlay.mount_program=/usr/bin/fuse-overlayfs"]
-
+    mkdir -p /etc/crio/crio.conf.d/
+    cat <<EOF | sudo tee /etc/crio/crio.conf.d/02-crio.conf
 [crio.runtime]
-default_runtime = "runc"
 conmon_cgroup = "pod"
 cgroup_manager = "systemd"
+default_capabilities = [
+    "CHOWN",
+    "DAC_OVERRIDE",
+    "FSETID",
+    "FOWNER",
+    "SETGID",
+    "SETUID",
+    "SETPCAP",
+    "NET_BIND_SERVICE",
+    "KILL"
+]
+default_ulimits = [
+    "nofile=1048576:1048576"
+]
 
 [crio.image]
 pause_image = "registry.k8s.io/pause:3.9"
-max_parallel_downloads = 10
+max_parallel_pulls = 5
 
 [crio.network]
 network_dir = "/etc/cni/net.d/"
@@ -181,79 +179,84 @@ enable_metrics = true
 metrics_port = 9537
 EOF
 
-    if [ -n "${ENVIRONMENT:-}" ]; then
+    # Add environment variables if specified
+    if [ ! -z "${ENVIRONMENT:-}" ]; then
         echo "${ENVIRONMENT}" | sudo tee -a /etc/default/crio
     fi
 
-    sudo systemctl daemon-reload
-    sudo systemctl enable crio
-    sudo systemctl restart crio
+    systemctl daemon-reload
+    systemctl enable --now crio
+    
+    # Verify installation
+    if ! systemctl is-active --quiet crio; then
+        log "ERROR" "CRI-O service failed to start"
+        systemctl status crio
+        exit 1
+    fi
+    
+    log "INFO" "CRI-O installation and configuration completed successfully"
 }
 
-# Function to install Kubernetes components
+# Install Kubernetes components
 install_kubernetes() {
-    echo "☸️ Installing Kubernetes components..." | tee -a "${SETUP_LOG}"
+    log "INFO" "Installing Kubernetes version ${KUBERNETES_VERSION}..."
+
+    # Extract the major.minor version for repository
+    KUBE_VERSION_MM=$(echo "${KUBERNETES_VERSION}" | cut -d. -f1-2)
     
     # Add Kubernetes repository
-    curl -fsSL "https://${K8S_REGISTRY}/core:/stable:/$KUBERNETES_VERSION/deb/Release.key" | \
+    # Install Kubernetes
+    curl -fsSL "https://pkgs.k8s.io/core:/stable:/$KUBERNETES_VERSION/deb/Release.key" | \
         sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
 
-    echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://${K8S_REGISTRY}/core:/stable:/$KUBERNETES_VERSION/deb/ /" | \
+    echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/$KUBERNETES_VERSION/deb/ /" | \
         sudo tee /etc/apt/sources.list.d/kubernetes.list
 
-    # Install Kubernetes packages
-    sudo apt-get update
-    sudo apt-get install -y kubelet kubeadm kubectl
-    sudo apt-mark hold kubelet kubeadm kubectl
+    # Install Kubernetes packages with retry
+    for i in {1..5}; do
+        if apt-get update && apt-get install -y kubelet kubeadm kubectl; then
+            log "INFO" "Successfully installed Kubernetes components"
+            break
+        fi
+        if [ $i -eq 5 ]; then
+            log "ERROR" "Failed to install Kubernetes components after 5 attempts"
+            exit 1
+        fi
+        log "WARN" "Kubernetes installation attempt $i failed. Retrying..."
+        sleep 10
+    done
+
+    # Hold package versions
+    apt-mark hold kubelet kubeadm kubectl
 
     # Configure kubelet
-    local_ip="$(ip --json a s | jq -r '.[] | if .ifname == "eth1" then .addr_info[] | if .family == "inet" then .local else empty end else empty end')"
-    
+    if ! local_ip="$(ip -j addr show eth1 | jq -r '.[].addr_info[] | select(.family == "inet").local')"; then
+        log "ERROR" "Could not detect local IP address"
+        exit 1
+    fi
+
+    mkdir -p /etc/default
     cat <<EOF | sudo tee /etc/default/kubelet
-KUBELET_EXTRA_ARGS="--node-ip=${local_ip} \
---container-runtime-endpoint=unix:///var/run/crio/crio.sock \
---runtime-request-timeout=15m \
---max-pods=250 \
---image-pull-progress-deadline=2m \
---cpu-manager-policy=static \
---topology-manager-policy=best-effort"
+KUBELET_EXTRA_ARGS=--node-ip=$local_ip
 EOF
 
-    if [ -n "${ENVIRONMENT:-}" ]; then
+    # Add environment variables if specified
+    if [ ! -z "${ENVIRONMENT:-}" ]; then
         echo "${ENVIRONMENT}" | sudo tee -a /etc/default/kubelet
     fi
-
-    sudo systemctl daemon-reload
-    sudo systemctl restart kubelet
-}
-
-# Function to verify installation
-verify_installation() {
-    echo "✅ Verifying installation..." | tee -a "${SETUP_LOG}"
-    
-    # Check CRI-O status
-    if ! sudo systemctl is-active crio &>/dev/null; then
-        echo "❌ CRI-O is not running" | tee -a "${SETUP_LOG}"
-        exit 1
-    fi
-
-    # Check kubelet status
-    if ! sudo systemctl is-active kubelet &>/dev/null; then
-        echo "❌ Kubelet is not running" | tee -a "${SETUP_LOG}"
-        exit 1
-    fi
-
-    echo "✅ Installation completed successfully!" | tee -a "${SETUP_LOG}"
 }
 
 # Main execution
-{
-    echo "🚀 Starting Kubernetes node setup..."
-    verify_environment
-    optimize_system
-    configure_networking
-    install_dependencies
+main() {
+    log "INFO" "Starting Kubernetes node setup..."
+    
+    disable_swap
+    configure_dns
+    container_runtime_setup
     install_crio
     install_kubernetes
-    verify_installation
-} 2>&1 | tee -a "${SETUP_LOG}"
+    
+    log "INFO" "Kubernetes node setup completed successfully"
+}
+
+main "$@"

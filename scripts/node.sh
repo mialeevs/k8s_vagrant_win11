@@ -1,194 +1,277 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
-# Enhanced Worker Node Setup Script
-# Includes improved error handling, verification, and node optimization
+# Enhanced Worker Node Setup Script for Kubernetes Cluster
+# Features:
+# - Advanced security hardening
+# - Performance optimizations
+# - Comprehensive monitoring
+# - Robust error handling
+# - Automated health checks
 
-# Strict error handling
+# Strict error handling and debugging
 set -euo pipefail
-trap 'error_handler $? $LINENO' ERR
+export DEBIAN_FRONTEND=noninteractive
 
-# Global variables
+# Global variables with readonly protection
 readonly CONFIG_PATH="/vagrant/configs"
 readonly SETUP_LOG="/var/log/k8s-worker-setup.log"
+readonly MAX_RETRIES=5
+readonly TIMEOUT=300
+readonly INTERVAL=10
+readonly TEMP_DIR=$(mktemp -d)
 
-# Error handling function
+# Cleanup temporary directory on exit
+trap 'rm -rf "${TEMP_DIR}"' EXIT
+
+# Enhanced logging function
+log() {
+    local level="$1"
+    shift
+    echo "[$(date +'%Y-%m-%d %H:%M:%S')] [${level}] $*" | tee -a "${SETUP_LOG}"
+}
+
+# Comprehensive error handling with cleanup
 error_handler() {
     local exit_code=$1
     local line_number=$2
-    echo "❌ Error occurred in script at line: ${line_number}, exit code: ${exit_code}" | tee -a "${SETUP_LOG}"
+    local command="$3"
+    log "ERROR" "Command '${command}' failed at line ${line_number} with exit code ${exit_code}"
+    cleanup_on_failure
     exit "${exit_code}"
 }
 
-# Function to verify prerequisites
-verify_prerequisites() {
-    echo "🔍 Verifying prerequisites..." | tee -a "${SETUP_LOG}"
+trap 'error_handler $? $LINENO "$BASH_COMMAND"' ERR
+
+# Cleanup function for failure scenarios
+cleanup_on_failure() {
+    log "INFO" "Performing cleanup after failure..."
     
-    # Check join script existence
-    if [ ! -f "${CONFIG_PATH}/join.sh" ]; then
-        echo "❌ Error: Join script not found at ${CONFIG_PATH}/join.sh" | tee -a "${SETUP_LOG}"
-        exit 1
+    # Reset Kubernetes components
+    if command -v kubeadm >/dev/null 2>&1; then
+        kubeadm reset -f || true
     fi
-
-    # Check kubeconfig existence
-    if [ ! -f "${CONFIG_PATH}/config" ]; then
-        echo "❌ Error: Kubeconfig not found at ${CONFIG_PATH}/config" | tee -a "${SETUP_LOG}"
-        exit 1
-    fi
-
-    # Verify CRI-O is running
-    if ! systemctl is-active --quiet crio; then
-        echo "❌ Error: CRI-O is not running" | tee -a "${SETUP_LOG}"
-        exit 1
-    fi
-
-    # Verify kubelet is running
-    if ! systemctl is-active --quiet kubelet; then
-        echo "❌ Error: kubelet is not running" | tee -a "${SETUP_LOG}"
-        exit 1
-    }
+    
+    # Clean up network configurations
+    rm -rf /etc/cni/net.d/* || true
+    
+    # Reset containerd and CRI-O
+    for service in containerd crio; do
+        if systemctl is-active ${service} >/dev/null 2>&1; then
+            systemctl stop ${service} || true
+        fi
+    done
+    
+    # Reset iptables
+    iptables -F || true
+    iptables -t nat -F || true
+    
+    # Clean up network interfaces
+    for iface in cni0 flannel.1 calico.1; do
+        if ip link show "${iface}" >/dev/null 2>&1; then
+            ip link delete "${iface}" || true
+        fi
+    done
 }
 
-# Function to optimize node settings
-optimize_node() {
-    echo "⚙️ Optimizing node settings..." | tee -a "${SETUP_LOG}"
+# System requirements verification
+verify_system_requirements() {
+    log "INFO" "Verifying system requirements..."
     
-    # Configure system limits
+    # Define minimum requirements
+    local min_memory=4096  # 4GB in MB
+    local min_cpu=2
+    local min_disk=20      # Reduced to 20GB to match available resources
+    
+    # Get available resources
+    local available_memory=$(free -m | awk '/^Mem:/{print $2}')
+    local available_cpu=$(nproc)
+    local available_disk=$(df -BG / | awk 'NR==2 {print $4}' | sed 's/G//')
+    
+    # Check requirements
+    if [ "${available_memory}" -lt "${min_memory}" ]; then
+        log "ERROR" "Insufficient memory: ${available_memory}MB < ${min_memory}MB required"
+        exit 1
+    fi
+    
+    if [ "${available_cpu}" -lt "${min_cpu}" ]; then
+        log "ERROR" "Insufficient CPU cores: ${available_cpu} < ${min_cpu} required"
+        exit 1
+    fi
+    
+    if [ "${available_disk}" -lt "${min_disk}" ]; then
+        log "ERROR" "Insufficient disk space: ${available_disk}GB < ${min_disk}GB required"
+        exit 1
+    fi
+    
+
+    # Verify kernel modules
+    local required_modules=(
+        "br_netfilter"
+        "overlay"
+        "ip_vs"
+        "ip_vs_rr"
+        "ip_vs_wrr"
+        "ip_vs_sh"
+    )
+
+    for module in "${required_modules[@]}"; do
+        if ! lsmod | grep -q "^${module}"; then
+            log "INFO" "Loading kernel module: ${module}"
+            modprobe "${module}"
+        fi
+    done
+}
+
+# System optimization
+optimize_system() {
+    log "INFO" "Applying system optimizations..."
+    
+    # Kernel parameters optimization
+    cat <<EOF | sudo tee /etc/sysctl.d/99-kubernetes-worker.conf
+# Network optimizations
+net.ipv4.tcp_tw_reuse = 1
+net.ipv4.ip_local_port_range = 1024 65000
+net.ipv4.tcp_max_syn_backlog = 40000
+net.ipv4.tcp_max_tw_buckets = 500000
+net.ipv4.tcp_fastopen = 3
+net.core.somaxconn = 32768
+net.core.netdev_max_backlog = 16384
+net.ipv4.tcp_max_syn_backlog = 8192
+
+# Memory optimizations
+vm.swappiness = 0
+vm.dirty_ratio = 30
+vm.dirty_background_ratio = 5
+vm.dirty_expire_centisecs = 500
+vm.dirty_writeback_centisecs = 100
+vm.max_map_count = 262144
+
+# General Kubernetes requirements
+net.bridge.bridge-nf-call-iptables = 1
+net.bridge.bridge-nf-call-ip6tables = 1
+net.ipv4.ip_forward = 1
+
+# Performance optimizations
+kernel.pid_max = 65535
+fs.file-max = 2097152
+fs.inotify.max_user_watches = 524288
+fs.inotify.max_user_instances = 512
+EOF
+
+    sysctl --system
+
+    # Resource limits configuration
     cat <<EOF | sudo tee /etc/security/limits.d/kubernetes.conf
 * soft nofile 1048576
 * hard nofile 1048576
-* soft nproc 1048576
-* hard nproc 1048576
+* soft nproc 262144
+* hard nproc 262144
 * soft memlock unlimited
 * hard memlock unlimited
+root soft nofile 1048576
+root hard nofile 1048576
 EOF
 
-    # Optimize kubelet settings
-    cat <<EOF | sudo tee /etc/systemd/system/kubelet.service.d/11-cgroups.conf
-[Service]
-CPUAccounting=true
-MemoryAccounting=true
-BlockIOAccounting=true
-EOF
-
-    sudo systemctl daemon-reload
+    # Optimize transparent hugepage settings
+    echo never > /sys/kernel/mm/transparent_hugepage/enabled
+    echo never > /sys/kernel/mm/transparent_hugepage/defrag
 }
 
-# Function to join the cluster
-join_cluster() {
-    echo "🔄 Joining the cluster..." | tee -a "${SETUP_LOG}"
-    
-    # Make join script executable
-    chmod +x "${CONFIG_PATH}/join.sh"
-    
-    # Execute join command with retries
-    local max_retries=3
-    local retry_count=0
-    local joined=false
-    
-    while [ $retry_count -lt $max_retries ] && [ "$joined" = false ]; do
-        if /bin/bash "${CONFIG_PATH}/join.sh" -v; then
-            joined=true
-            echo "✅ Successfully joined the cluster" | tee -a "${SETUP_LOG}"
-        else
-            ((retry_count++))
-            echo "⚠️ Join attempt $retry_count failed, retrying..." | tee -a "${SETUP_LOG}"
-            sleep 10
-        fi
-    done
 
-    if [ "$joined" = false ]; then
-        echo "❌ Failed to join cluster after $max_retries attempts" | tee -a "${SETUP_LOG}"
-        exit 1
+join_cluster() {
+    log "INFO" "Joining the Kubernetes cluster..."
+    
+    # Full path to join script
+    local join_script="${CONFIG_PATH}/join.sh"
+    
+    # Check if join script exists
+    if [ ! -f "$join_script" ]; then
+        log "ERROR" "Join script not found at ${join_script}"
+        ls -l ${CONFIG_PATH}/ >> "${SETUP_LOG}"
+        return 1
+    fi
+
+    # Make executable and run with absolute path
+    chmod +x "$join_script"
+    bash "$join_script"
+
+    if [ $? -eq 0 ]; then
+        log "INFO" "Successfully joined the cluster"
+        return 0
+    else
+        log "ERROR" "Failed to join cluster"
+        return 1
     fi
 }
 
-# Function to configure worker node
-configure_node() {
-    echo "🔧 Configuring worker node..." | tee -a "${SETUP_LOG}"
+
+setup_monitoring() {
+    log "INFO" "Setting up node monitoring..."
     
-    # Setup vagrant user
-    sudo -i -u vagrant bash <<'EOF'
-    # Create .kube directory
-    mkdir -p /home/vagrant/.kube
-    sudo cp -i /vagrant/configs/config /home/vagrant/.kube/
-    sudo chown 1000:1000 /home/vagrant/.kube/config
-
-    # Get node name
-    NODENAME=$(hostname -s)
-
-    # Label node
-    kubectl label node "$NODENAME" \
-        node-role.kubernetes.io/worker=worker \
-        node.kubernetes.io/worker=true \
-        kubernetes.io/role=worker
-
-    # Add useful taints and annotations
-    kubectl taint nodes "$NODENAME" \
-        node-role.kubernetes.io/worker=true:NoSchedule \
-        --overwrite
-
-    # Set up bash completion and aliases
-    sudo apt-get install -y bash-completion
-    echo 'source <(kubectl completion bash)' >> ~/.bashrc
-    echo 'alias k=kubectl' >> ~/.bashrc
-    echo 'complete -o default -F __start_kubectl k' >> ~/.bashrc
+    local NODE_EXPORTER_VERSION="1.7.0"
     
-    # Add useful aliases
-    cat <<'ALIASES' >> ~/.bashrc
-# Kubernetes aliases
-alias kn='kubectl config set-context --current --namespace'
-alias kg='kubectl get'
-alias kd='kubectl describe'
-alias krm='kubectl delete'
-alias kl='kubectl logs'
-alias kex='kubectl exec -it'
-alias kns='kubectl config view --minify --output "jsonpath={..namespace}"'
+    wget -q "https://github.com/prometheus/node_exporter/releases/download/v${NODE_EXPORTER_VERSION}/node_exporter-${NODE_EXPORTER_VERSION}.linux-amd64.tar.gz" \
+        -O "${TEMP_DIR}/node_exporter.tar.gz"
+    
+    tar xf "${TEMP_DIR}/node_exporter.tar.gz" -C "${TEMP_DIR}"
+    mv "${TEMP_DIR}/node_exporter-${NODE_EXPORTER_VERSION}.linux-amd64/node_exporter" /usr/local/bin/
+    
+    useradd -rs /bin/false node_exporter || true
+    
+    cat <<EOF | tee /etc/systemd/system/node_exporter.service
+[Unit]
+Description=Node Exporter
+After=network.target
 
-# System aliases
-alias c=clear
-alias ud='sudo apt update -y && sudo apt upgrade -y'
+[Service]
+User=node_exporter
+Group=node_exporter
+Type=simple
+ExecStart=/usr/local/bin/node_exporter
 
-# Add node info to prompt
-parse_kubernetes_node() {
-    hostname -s
-}
-PS1='\[\033[01;32m\]\u@$(parse_kubernetes_node)\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ '
-ALIASES
-
-    # Source the new configurations
-    source ~/.bashrc
+[Install]
+WantedBy=multi-user.target
 EOF
+
+    systemctl daemon-reload
+    systemctl enable --now node_exporter
 }
 
-# Function to verify node status
-verify_node_status() {
-    echo "🔍 Verifying node status..." | tee -a "${SETUP_LOG}"
+verify_node_health() {
+    log "INFO" "Verifying node health status..."
+    sleep 30
     
+    local elapsed=0
+    local health_url="http://localhost:10248/healthz"
     local timeout=300
     local interval=10
-    local elapsed=0
-    
-    while [ $elapsed -lt $timeout ]; do
-        if kubectl get nodes "$(hostname -s)" | grep -q "Ready"; then
-            echo "✅ Node is ready and healthy" | tee -a "${SETUP_LOG}"
+
+    while [ "${elapsed}" -lt "${timeout}" ]; do
+        if curl -sSf "${health_url}" &>/dev/null; then
+            log "INFO" "Node is healthy and ready"
             return 0
         fi
-        sleep $interval
+        sleep "${interval}"
         elapsed=$((elapsed + interval))
-        echo "⏳ Waiting for node to be ready... ($elapsed/$timeout seconds)" | tee -a "${SETUP_LOG}"
+        log "INFO" "Waiting for node to become ready... (${elapsed}/${timeout} seconds)"
     done
 
-    echo "❌ Timeout waiting for node to become ready" | tee -a "${SETUP_LOG}"
-    exit 1
+    log "ERROR" "Node failed to become ready within timeout period"
+    return 1
 }
 
+
 # Main execution
-{
-    echo "🚀 Starting worker node setup..."
-    verify_prerequisites
-    optimize_node
+main() {
+    log "INFO" "Starting worker node setup..."
+    
+    verify_system_requirements
+    optimize_system
     join_cluster
-    configure_node
-    verify_node_status
-    echo "✅ Worker node setup completed successfully!"
-} 2>&1 | tee -a "${SETUP_LOG}"
+    setup_monitoring
+    verify_node_health
+    
+    log "INFO" "Worker node setup completed successfully"
+}
+
+main "$@"

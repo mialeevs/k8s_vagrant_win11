@@ -1,250 +1,177 @@
-#!/bin/bash
-#
-# Enhanced Setup for Kubernetes Control Plane
-# This script includes improved error handling, monitoring, and performance optimizations
+#!/usr/bin/env bash
 
-# Strict error handling
-set -euo pipefail
-trap 'catch_error $? $LINENO' ERR
+set -euxo pipefail
 
-# Error handling function
-catch_error() {
-    local exit_code=$1
-    local line_number=$2
-    echo "Error occurred in script at line: ${line_number}, exit code: ${exit_code}"
-    exit "${exit_code}"
+# Global variables
+SETUP_LOG=${SETUP_LOG:-"/var/log/k8s-control-setup.log"}
+TEMP_DIR=$(mktemp -d)
+trap 'rm -rf "${TEMP_DIR}"' EXIT
+
+log() {
+   local level="$1"
+   shift
+   echo "[$(date +'%Y-%m-%d %H:%M:%S')] [${level}] $*" | tee -a "${SETUP_LOG}"
 }
 
-# Function to check system prerequisites
-check_prerequisites() {
-    echo "🔍 Checking system prerequisites..."
-    
-    # Check system resources
-    local mem_available
-    mem_available=$(free -m | awk '/^Mem:/{print $2}')
-    if [ "${mem_available}" -lt 3500 ]; then
-        echo "⚠️  Warning: Less than 4GB RAM available"
-        sleep 3
-    fi
+error_handler() {
+   local exit_code=$1
+   local line_number=$2
+   log "ERROR" "Error on line ${line_number}: Command exited with status ${exit_code}"
+   cleanup_on_failure
+   exit "${exit_code}"
+}
+trap 'error_handler $? $LINENO' ERR
 
-    # Verify required tools
-    for tool in curl wget kubectl kubeadm crictl; do
-        if ! command -v "$tool" &> /dev/null; then
-            echo "❌ Required tool not found: $tool"
-            exit 1
-        fi
-    done
+cleanup_on_failure() {
+   log "INFO" "Performing cleanup after failure..."
+   kubeadm reset -f || true
+   rm -rf /etc/cni/net.d/*
+   iptables -F && iptables -t nat -F
 }
 
-# Function to optimize system settings
-optimize_system() {
-    echo "⚙️ Optimizing system settings..."
-    
-    # Disable swap
-    sudo swapoff -a
-    sudo sed -i '/swap/d' /etc/fstab
-    
-    # Optimize kernel parameters for Kubernetes
-    cat <<EOF | sudo tee /etc/sysctl.d/99-kubernetes.conf
-net.bridge.bridge-nf-call-iptables  = 1
-net.bridge.bridge-nf-call-ip6tables = 1
-net.ipv4.ip_forward                 = 1
-net.ipv4.tcp_tw_recycle            = 0
-net.ipv4.tcp_tw_reuse              = 1
-net.core.somaxconn                 = 32768
-net.core.netdev_max_backlog        = 16384
-net.ipv4.tcp_max_syn_backlog       = 8192
-net.ipv4.tcp_fin_timeout           = 15
-vm.swappiness                      = 0
-EOF
-    sudo sysctl --system
-
-    # Disable unnecessary services
-    sudo systemctl stop ufw || true
-    sudo systemctl disable ufw || true
+wait_for_apiserver() {
+   log "INFO" "Waiting for API server to be ready..."
+   local timeout=180
+   local interval=5
+   local elapsed=0
+   
+   while [ $elapsed -lt $timeout ]; do
+       if kubectl get nodes &>/dev/null; then
+           log "INFO" "API server is ready"
+           return 0
+       fi
+       log "INFO" "Waiting for API server... ($elapsed/$timeout seconds)"
+       sleep $interval
+       elapsed=$((elapsed + interval))
+   done
+   
+   log "ERROR" "Timeout waiting for API server"
+   return 1
 }
 
-# Function to verify CRI-O status
-verify_crio() {
-    echo "🔍 Verifying CRI-O status..."
-    
-    if ! sudo systemctl is-active crio &>/dev/null; then
-        echo "🔄 Restarting CRI-O service..."
-        sudo systemctl restart crio
-        sleep 5
-    fi
-    
-    # Check CRI-O connectivity
-    if ! sudo crictl --runtime-endpoint unix:///var/run/crio/crio.sock ps &>/dev/null; then
-        echo "❌ CRI-O is not responding"
-        exit 1
-    fi
+wait_for_pods() {
+   local namespace=$1
+   local label=$2
+   local timeout=300
+   local interval=10
+   local elapsed=0
+
+   log "INFO" "Waiting for pods with label $label in namespace $namespace..."
+   
+   while [ $elapsed -lt $timeout ]; do
+       if kubectl get pods -n "$namespace" -l "$label" 2>/dev/null | grep -q "Running"; then
+           local ready_pods=$(kubectl get pods -n "$namespace" -l "$label" -o jsonpath='{.items[*].status.containerStatuses[*].ready}' | grep -o "true" | wc -l)
+           local total_pods=$(kubectl get pods -n "$namespace" -l "$label" --no-headers | wc -l)
+           
+           if [ "$ready_pods" -eq "$total_pods" ] && [ "$total_pods" -gt 0 ]; then
+               log "INFO" "All pods are ready ($ready_pods/$total_pods)"
+               return 0
+           fi
+       fi
+       
+       log "INFO" "Waiting for pods to be ready... ($elapsed/$timeout seconds)"
+       sleep $interval
+       elapsed=$((elapsed + interval))
+   done
+   
+   log "ERROR" "Timeout waiting for pods"
+   kubectl get pods -n "$namespace" -l "$label" -o wide
+   return 1
 }
 
-# Function to prepare for kubeadm
-prepare_kubeadm() {
-    echo "🔄 Preparing for kubeadm initialization..."
-    
-    # Reset previous installation
-    sudo kubeadm reset -f || true
-    sudo rm -rf /etc/cni/net.d/*
-    sudo rm -rf "$HOME/.kube/config"
-    
-    # Clean up old certificates and configurations
-    sudo rm -rf /etc/kubernetes/pki
-    sudo rm -rf /etc/kubernetes/manifests/*
-}
-
-# Function to initialize control plane
 initialize_control_plane() {
-    echo "🚀 Initializing Kubernetes control plane..."
-    
-    # Get control plane IP
-    CONTROL_IP=$(ip -f inet addr show eth1 | grep -Po 'inet \K[\d.]+')
-    echo "📍 Control Plane IP: $CONTROL_IP"
-    
-    # Pull images with retry mechanism
-    local retry_count=0
-    while ! sudo kubeadm config images pull && [ $retry_count -lt 3 ]; do
-        echo "🔄 Retrying image pull..."
-        ((retry_count++))
-        sleep 5
-    done
-
-    # Initialize with optimized settings
-    sudo kubeadm init \
-        --apiserver-advertise-address="$CONTROL_IP" \
-        --apiserver-cert-extra-sans="$CONTROL_IP" \
-        --pod-network-cidr="$POD_CIDR" \
-        --service-cidr="$SERVICE_CIDR" \
-        --node-name "$(hostname -s)" \
-        --ignore-preflight-errors=Swap \
-        --upload-certs \
-        --control-plane-endpoint="$CONTROL_IP" \
-        --v=5
-}
-
-# Function to configure networking
-configure_networking() {
-    echo "🌐 Configuring cluster networking..."
-    
-    # Setup kubectl for the current user
-    mkdir -p "$HOME/.kube"
-    sudo cp -i /etc/kubernetes/admin.conf "$HOME/.kube/config"
-    sudo chown "$(id -u)":"$(id -g)" "$HOME/.kube/config"
-    
-    # Save configurations for worker nodes
-    config_path="/vagrant/configs"
-    mkdir -p "$config_path"
-    cp -f "$HOME/.kube/config" "$config_path/config"
-    
-    # Generate join command
-    kubeadm token create --print-join-command > "$config_path/join.sh"
-    chmod +x "$config_path/join.sh"
-    
-    # Install and configure Calico
-    echo "🔧 Installing Calico network plugin..."
-    if ! curl -sSLo calico.yaml "https://raw.githubusercontent.com/projectcalico/calico/v${CALICO_VERSION}/manifests/calico.yaml"; then
-        echo "❌ Failed to download Calico manifest"
-        exit 1
-    fi
-    
-    # Apply network configuration
-    kubectl apply -f calico.yaml
-}
-
-# Function to install additional components
-install_components() {
-    echo "📦 Installing additional components..."
-    
-    # Install metrics server
-    kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
-    
-    # Configure metrics server for development environment
-    kubectl patch deployment metrics-server \
-        -n kube-system \
-        --type=json \
-        -p '[{"op": "add", "path": "/spec/template/spec/containers/0/args/-", "value": "--kubelet-insecure-tls"}]'
-}
-
-# Function to configure vagrant user
-configure_vagrant_user() {
-    echo "👤 Configuring vagrant user environment..."
-    
-    sudo -i -u vagrant bash <<'EOF'
-    mkdir -p /home/vagrant/.kube
-    sudo cp -i /vagrant/configs/config /home/vagrant/.kube/
-    sudo chown 1000:1000 /home/vagrant/.kube/config
-    
-    # Install and configure bash completion
-    sudo apt-get install -y bash-completion
-    
-    # Setup helpful aliases and completions
-    cat <<'ALIASES' >> /home/vagrant/.bashrc
-# Kubernetes aliases and completions
-source <(kubectl completion bash)
-complete -F __start_kubectl k
-alias k=kubectl
-alias kn='kubectl config set-context --current --namespace'
-alias kg='kubectl get'
-alias kd='kubectl describe'
-alias krm='kubectl delete'
-alias kl='kubectl logs'
-alias kex='kubectl exec -it'
-alias c=clear
-alias ud='sudo apt update -y && sudo apt upgrade -y'
-
-# Enhanced prompt with kubectl context
-parse_kubernetes_context() {
-    kubectl config current-context 2>/dev/null
-}
-PS1='\[\033[01;32m\]\u@\h\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\] [\[\033[01;33m\]$(parse_kubernetes_context)\[\033[00m\]]\$ '
-ALIASES
-
-    source /home/vagrant/.bashrc
+   log "INFO" "Initializing control plane..."
+   
+   cat <<EOF > "$TEMP_DIR/kubeadm-config.yaml"
+apiVersion: kubeadm.k8s.io/v1beta3
+kind: InitConfiguration
+localAPIEndpoint:
+ advertiseAddress: "${CONTROL_IP}"
+ bindPort: 6443
+nodeRegistration:
+ criSocket: "unix:///var/run/crio/crio.sock"
+ imagePullPolicy: IfNotPresent
+---
+apiVersion: kubeadm.k8s.io/v1beta3
+kind: ClusterConfiguration
+networking:
+ serviceSubnet: "${SERVICE_CIDR}"
+ podSubnet: "${POD_CIDR}"
+ dnsDomain: "cluster.local"
+apiServer:
+ extraArgs:
+   authorization-mode: "Node,RBAC"
+   enable-admission-plugins: "NodeRestriction"
+controllerManager:
+ extraArgs:
+   bind-address: "0.0.0.0"
+scheduler:
+ extraArgs:
+   bind-address: "0.0.0.0"
 EOF
+
+   kubeadm config images pull --config "$TEMP_DIR/kubeadm-config.yaml"
+   kubeadm init --config "$TEMP_DIR/kubeadm-config.yaml" --upload-certs
+
+   mkdir -p /home/vagrant/.kube
+   cp -i /etc/kubernetes/admin.conf /home/vagrant/.kube/config
+   chown -R vagrant:vagrant /home/vagrant/.kube
+
+   export KUBECONFIG=/etc/kubernetes/admin.conf
+
+   wait_for_apiserver
+
+   sleep 5
+   sudo apt-get install bash-completion -y
+   echo "source <(kubectl completion bash)" >> ~/.bashrc
+   echo "complete -F __start_kubectl k" >> ~/.bashrc
+   echo "alias k=kubectl" >> ~/.bashrc
+   echo "alias c=clear" >> ~/.bashrc
+   echo "alias ud='sudo apt update -y && sudo apt upgrade -y'" >> ~/.bashrc
+
+   # Configure Calico IP autodetection
+   cat <<EOF > "$TEMP_DIR/calico-config.yaml"
+apiVersion: v1
+kind: ConfigMap
+metadata:
+ name: calico-config
+ namespace: kube-system
+data:
+ calico_backend: "bird"
+ veth_mtu: "1440"
+ ip_autodetection_method: "interface=eth0"
+EOF
+
+   kubectl apply -f "$TEMP_DIR/calico-config.yaml"
+
+   log "INFO" "Downloading Calico manifest..."
+   curl -L https://raw.githubusercontent.com/projectcalico/calico/v${CALICO_VERSION}/manifests/calico.yaml \
+       -o "$TEMP_DIR/calico.yaml"
+
+   sed -i "s#192.168.0.0/16#${POD_CIDR}#g" "$TEMP_DIR/calico.yaml"
+   sed -i '/name: CALICO_IPV4POOL_CIDR/a\            - name: IP_AUTODETECTION_METHOD\n              value: "interface=eth0"' "$TEMP_DIR/calico.yaml"
+
+   log "INFO" "Applying Calico manifest..."
+   kubectl apply -f "$TEMP_DIR/calico.yaml"
+
+   log "INFO" "Waiting for CoreDNS to be ready..."
+   wait_for_pods "kube-system" "k8s-app=kube-dns"
+
+   log "INFO" "Waiting for Calico to be ready..."
+   wait_for_pods "kube-system" "k8s-app=calico-node"
+
+   log "INFO" "Verifying cluster status..."
+   kubectl get nodes -o wide
+   kubectl get pods --all-namespaces
+
+   kubeadm token create --print-join-command > /vagrant/configs/join.sh
+   chmod +x /vagrant/configs/join.sh
 }
 
-# Function to verify cluster health
-verify_cluster_health() {
-    echo "🔍 Verifying cluster health..."
-    
-    # Wait for node to be ready
-    local timeout=300
-    local interval=10
-    local elapsed=0
-    
-    while [ $elapsed -lt $timeout ]; do
-        if kubectl get nodes | grep -q "Ready"; then
-            echo "✅ Node is ready"
-            break
-        fi
-        sleep $interval
-        elapsed=$((elapsed + interval))
-        echo "⏳ Waiting for node to be ready... ($elapsed/$timeout seconds)"
-    done
-
-    if [ $elapsed -ge $timeout ]; then
-        echo "❌ Timeout waiting for node to be ready"
-        exit 1
-    fi
-    
-    # Display cluster status
-    kubectl get nodes -o wide
-    kubectl get pods --all-namespaces
+main() {
+   log "INFO" "Starting control plane setup..."
+   initialize_control_plane
+   log "INFO" "Control plane setup completed successfully"
 }
 
-# Main execution
-{
-    echo "🚀 Starting Kubernetes control plane setup..."
-    check_prerequisites
-    optimize_system
-    verify_crio
-    prepare_kubeadm
-    initialize_control_plane
-    configure_networking
-    install_components
-    configure_vagrant_user
-    verify_cluster_health
-    echo "✅ Control plane setup completed successfully!"
-} 2>&1 | tee /var/log/k8s-control-setup.log
+main "$@"
