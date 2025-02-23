@@ -1,8 +1,4 @@
 #!/usr/bin/env bash
-#
-# Enhanced Kubernetes Node Setup Script
-# This script performs common setup for both Control Plane and Worker nodes
-# with advanced security features and optimizations.
 
 # Strict error handling
 set -euxo pipefail

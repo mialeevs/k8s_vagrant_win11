@@ -56,7 +56,6 @@ Vagrant.configure('2') do |config|
     settings['software']['box']
   end
   
-  config.vm.box_version = '202404.26.0'
   config.vm.box_check_update = true
 
   # Disable default shared folder
@@ -71,7 +70,7 @@ Vagrant.configure('2') do |config|
 
   # Control plane node configuration
   config.vm.define 'control-plane', primary: true do |control|
-    control.vm.hostname = 'master-node'
+    control.vm.hostname = 'control-node'
     
     # Public network configuration for control plane
     control.vm.network 'public_network',

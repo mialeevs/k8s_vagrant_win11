@@ -34,7 +34,7 @@ wait_for_apiserver() {
    local timeout=180
    local interval=5
    local elapsed=0
-   
+
    while [ $elapsed -lt $timeout ]; do
        if kubectl get nodes &>/dev/null; then
            log "INFO" "API server is ready"
@@ -44,7 +44,7 @@ wait_for_apiserver() {
        sleep $interval
        elapsed=$((elapsed + interval))
    done
-   
+
    log "ERROR" "Timeout waiting for API server"
    return 1
 }
@@ -57,23 +57,23 @@ wait_for_pods() {
    local elapsed=0
 
    log "INFO" "Waiting for pods with label $label in namespace $namespace..."
-   
+
    while [ $elapsed -lt $timeout ]; do
        if kubectl get pods -n "$namespace" -l "$label" 2>/dev/null | grep -q "Running"; then
            local ready_pods=$(kubectl get pods -n "$namespace" -l "$label" -o jsonpath='{.items[*].status.containerStatuses[*].ready}' | grep -o "true" | wc -l)
            local total_pods=$(kubectl get pods -n "$namespace" -l "$label" --no-headers | wc -l)
-           
+
            if [ "$ready_pods" -eq "$total_pods" ] && [ "$total_pods" -gt 0 ]; then
                log "INFO" "All pods are ready ($ready_pods/$total_pods)"
                return 0
            fi
        fi
-       
+
        log "INFO" "Waiting for pods to be ready... ($elapsed/$timeout seconds)"
        sleep $interval
        elapsed=$((elapsed + interval))
    done
-   
+
    log "ERROR" "Timeout waiting for pods"
    kubectl get pods -n "$namespace" -l "$label" -o wide
    return 1
@@ -81,7 +81,7 @@ wait_for_pods() {
 
 initialize_control_plane() {
    log "INFO" "Initializing control plane..."
-   
+
    cat <<EOF > "$TEMP_DIR/kubeadm-config.yaml"
 apiVersion: kubeadm.k8s.io/v1beta3
 kind: InitConfiguration
