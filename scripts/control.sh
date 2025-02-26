@@ -83,31 +83,35 @@ initialize_control_plane() {
    log "INFO" "Initializing control plane..."
 
    cat <<EOF > "$TEMP_DIR/kubeadm-config.yaml"
-apiVersion: kubeadm.k8s.io/v1beta3
+apiVersion: kubeadm.k8s.io/v1beta4
 kind: InitConfiguration
 localAPIEndpoint:
- advertiseAddress: "${CONTROL_IP}"
- bindPort: 6443
+  advertiseAddress: "${CONTROL_IP}"
+  bindPort: 6443
 nodeRegistration:
- criSocket: "unix:///var/run/crio/crio.sock"
- imagePullPolicy: IfNotPresent
+  criSocket: "unix:///var/run/crio/crio.sock"
+  imagePullPolicy: IfNotPresent
 ---
-apiVersion: kubeadm.k8s.io/v1beta3
+apiVersion: kubeadm.k8s.io/v1beta4
 kind: ClusterConfiguration
 networking:
- serviceSubnet: "${SERVICE_CIDR}"
- podSubnet: "${POD_CIDR}"
- dnsDomain: "cluster.local"
+  serviceSubnet: "${SERVICE_CIDR}"
+  podSubnet: "${POD_CIDR}"
+  dnsDomain: "cluster.local"
 apiServer:
- extraArgs:
-   authorization-mode: "Node,RBAC"
-   enable-admission-plugins: "NodeRestriction"
+  extraArgs:
+    - name: "authorization-mode"
+      value: "Node,RBAC"
+    - name: "enable-admission-plugins"
+      value: "NodeRestriction"
 controllerManager:
- extraArgs:
-   bind-address: "0.0.0.0"
+  extraArgs:
+    - name: "bind-address"
+      value: "0.0.0.0"
 scheduler:
- extraArgs:
-   bind-address: "0.0.0.0"
+  extraArgs:
+    - name: "bind-address"
+      value: "0.0.0.0"
 EOF
 
    kubeadm config images pull --config "$TEMP_DIR/kubeadm-config.yaml"
@@ -129,38 +133,41 @@ EOF
    echo "alias c=clear" >> ~/.bashrc
    echo "alias ud='sudo apt update -y && sudo apt upgrade -y'" >> ~/.bashrc
 
-   # Configure Calico IP autodetection
-   cat <<EOF > "$TEMP_DIR/calico-config.yaml"
+
+
+install_calico() {
+    # Configure Calico IP autodetection
+    cat <<EOF > "/vagrant/calico-config.yaml"
 apiVersion: v1
 kind: ConfigMap
 metadata:
- name: calico-config
- namespace: kube-system
+  name: calico-config
+  namespace: kube-system
 data:
- calico_backend: "bird"
- veth_mtu: "1440"
- ip_autodetection_method: "interface=eth0"
+  calico_backend: "bird"
+  veth_mtu: "1440"
+  ip_autodetection_method: "interface=eth1"
 EOF
 
-   kubectl apply -f "$TEMP_DIR/calico-config.yaml"
+   kubectl apply -f "/vagrant/calico-config.yaml"
 
-   log "INFO" "Downloading Calico manifest..."
+   echo "INFO: Downloading Calico manifest..."
    curl -L https://raw.githubusercontent.com/projectcalico/calico/v${CALICO_VERSION}/manifests/calico.yaml \
-       -o "$TEMP_DIR/calico.yaml"
+      -o "/vagrant/calico.yaml"
 
-   sed -i "s#192.168.0.0/16#${POD_CIDR}#g" "$TEMP_DIR/calico.yaml"
-   sed -i '/name: CALICO_IPV4POOL_CIDR/a\            - name: IP_AUTODETECTION_METHOD\n              value: "interface=eth0"' "$TEMP_DIR/calico.yaml"
+   sed -i "s#192.168.0.0/16#${POD_CIDR}#g" "/vagrant/calico.yaml"
+   sed -i '/name: CALICO_IPV4POOL_CIDR/a\            - name: IP_AUTODETECTION_METHOD\n              value: "interface=eth1"' "/vagrant/calico.yaml"
 
-   log "INFO" "Applying Calico manifest..."
-   kubectl apply -f "$TEMP_DIR/calico.yaml"
+   echo "INFO: Applying Calico manifest..."
+   kubectl apply -f "/vagrant/calico.yaml"
 
-   log "INFO" "Waiting for CoreDNS to be ready..."
+   echo "INFO: Waiting for CoreDNS to be ready..."
    wait_for_pods "kube-system" "k8s-app=kube-dns"
 
-   log "INFO" "Waiting for Calico to be ready..."
+   echo "INFO: Waiting for Calico to be ready..."
    wait_for_pods "kube-system" "k8s-app=calico-node"
 
-   log "INFO" "Verifying cluster status..."
+   echo "INFO: Verifying cluster status..."
    kubectl get nodes -o wide
    kubectl get pods --all-namespaces
 
@@ -168,9 +175,11 @@ EOF
    chmod +x /vagrant/configs/join.sh
 }
 
+}
 main() {
    log "INFO" "Starting control plane setup..."
    initialize_control_plane
+   install_calico
    log "INFO" "Control plane setup completed successfully"
 }
 

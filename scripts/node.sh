@@ -208,7 +208,7 @@ join_cluster() {
 setup_monitoring() {
     log "INFO" "Setting up node monitoring..."
     
-    local NODE_EXPORTER_VERSION="1.7.0"
+    local NODE_EXPORTER_VERSION="1.8.2"
     
     wget -q "https://github.com/prometheus/node_exporter/releases/download/v${NODE_EXPORTER_VERSION}/node_exporter-${NODE_EXPORTER_VERSION}.linux-amd64.tar.gz" \
         -O "${TEMP_DIR}/node_exporter.tar.gz"

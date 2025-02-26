@@ -12,7 +12,7 @@ network:
   control_ip: 192.168.1.100
   worker_ip_prefix: 192.168.1
   private_ip_prefix: 172.16.0
-  bridge_interface: 'eth0'
+  bridge_interface: 'Ethernet' # Need to remove
   netmask: '255.255.255.0'
 
 nodes:
@@ -29,7 +29,7 @@ nodes:
 software:
   box: bento/ubuntu-24.04
   calico: 3.28.2
-  kubernetes: v1.30
+  kubernetes: v1.31
   os: xUbuntu_24.04
   crio: v1.30
   node_exporter: 1.8.2
@@ -50,7 +50,12 @@ vm_options:
   enable_nested_virtualization: true
   memory_balloon: false
   page_fusion: false
-  
+
+hostmanager:
+  enabled: true
+  manage_host: true
+  manage_guest: true
+
 security:
   disable_usb: true
   disable_audio: true

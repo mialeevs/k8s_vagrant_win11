@@ -24,44 +24,52 @@ end
 Vagrant.configure('2') do |config|
   # Load configuration
   settings = load_settings
-  
+
+  # Ensure the hostmanager plugin is present if needed
+  if Vagrant.has_plugin?("vagrant-hostmanager")
+    config.hostmanager.enabled = settings.dig('hostmanager', 'enabled')
+    config.hostmanager.manage_host = settings.dig('hostmanager', 'manage_host')
+    config.hostmanager.manage_guest = settings.dig('hostmanager', 'manage_guest')
+  end
+
   # Global VM provider settings
   config.vm.provider 'virtualbox' do |vb|
+    # vb.memory = settings['nodes']['default']['memory']
+    # vb.cpus = settings['nodes']['default']['cpu']
+
     # Security settings
     vb.customize ['modifyvm', :id, '--clipboard-mode', 'disabled']
     vb.customize ['modifyvm', :id, '--drag-and-drop', 'disabled']
     vb.customize ['modifyvm', :id, '--audio', 'none']
     vb.customize ['modifyvm', :id, '--usb', 'off']
     vb.customize ['modifyvm', :id, '--vrde', 'off']
-    
-    # CPU performance optimizations
+
+    # CPU and Memory optimizations
     vb.customize ['modifyvm', :id, '--hwvirtex', 'on']
     vb.customize ['modifyvm', :id, '--vtxvpid', 'on']
     vb.customize ['modifyvm', :id, '--vtxux', 'on']
     vb.customize ['modifyvm', :id, '--paravirtprovider', 'kvm']
     vb.customize ['modifyvm', :id, '--largepages', 'on']
     vb.customize ['modifyvm', :id, '--nestedpaging', 'on']
-    
-    # Memory optimizations
     vb.customize ['modifyvm', :id, '--pagefusion', 'off']
-    
+
     # I/O optimizations
     vb.customize ['storagectl', :id, '--name', 'SATA Controller', '--hostiocache', 'on']
   end
 
-  # Box configuration with architecture detection
+  # Box configuration with architecture detection (for cross-platform compatibility)
   config.vm.box = if `uname -m`.strip == 'aarch64'
     "#{settings['software']['box']}-arm64"
   else
     settings['software']['box']
   end
-  
+
   config.vm.box_check_update = true
 
   # Disable default shared folder
   config.vm.synced_folder '.', '/vagrant', disabled: true
   
-  # Configure secure shared folders
+  # Secure shared folder configuration
   config.vm.synced_folder './configs', '/vagrant/configs',
     owner: 'vagrant',
     group: 'vagrant',
@@ -72,37 +80,28 @@ Vagrant.configure('2') do |config|
   config.vm.define 'control-plane', primary: true do |control|
     control.vm.hostname = 'control-node'
     
-    # Public network configuration for control plane
+    # Network configuration
     control.vm.network 'public_network',
       ip: settings['network']['control_ip'],
       bridge: settings['network']['bridge_interface'],
       netmask: settings['network']['netmask'],
       nic_type: 'virtio'
 
-    # Additional private network for internal cluster communication
     control.vm.network 'private_network',
       ip: "#{settings['network']['private_ip_prefix']}.10",
       virtualbox__intnet: 'cluster_internal',
       nic_type: 'virtio'
     
+    # VirtualBox provider settings
     control.vm.provider 'virtualbox' do |vb|
       vb.memory = settings['nodes']['control']['memory']
       vb.cpus = settings['nodes']['control']['cpu']
-      
+
       # Storage configuration
       disk_path = 'control_plane_disk.vdi'
       unless File.exist?(disk_path)
-        vb.customize ['createhd', 
-                     '--filename', disk_path,
-                     '--size', settings['nodes']['control']['disk_size'],
-                     '--variant', 'Fixed']
-        
-        vb.customize ['storageattach', :id,
-                     '--storagectl', 'SATA Controller',
-                     '--port', 1,
-                     '--device', 0,
-                     '--type', 'hdd',
-                     '--medium', disk_path]
+        vb.customize ['createhd', '--filename', disk_path, '--size', settings['nodes']['control']['disk_size'], '--variant', 'Fixed']
+        vb.customize ['storageattach', :id, '--storagectl', 'SATA Controller', '--port', 1, '--device', 0, '--type', 'hdd', '--medium', disk_path]
       end
     end
 
@@ -132,38 +131,28 @@ Vagrant.configure('2') do |config|
   (1..settings['nodes']['workers']['count']).each do |i|
     config.vm.define "worker#{i}" do |worker|
       worker.vm.hostname = "worker-node#{i}"
-      
-      # Public network configuration for worker nodes
+
+      # Network configuration
       worker.vm.network 'public_network',
         ip: "#{settings['network']['worker_ip_prefix']}.#{i + 10}",
         bridge: settings['network']['bridge_interface'],
         netmask: settings['network']['netmask'],
         nic_type: 'virtio'
 
-      # Additional private network for internal cluster communication
       worker.vm.network 'private_network',
         ip: "#{settings['network']['private_ip_prefix']}.#{i + 20}",
         virtualbox__intnet: 'cluster_internal',
         nic_type: 'virtio'
-      
+
       worker.vm.provider 'virtualbox' do |vb|
         vb.memory = settings['nodes']['workers']['memory']
         vb.cpus = settings['nodes']['workers']['cpu']
-        
+
         # Storage configuration
         disk_path = "worker#{i}_disk.vdi"
         unless File.exist?(disk_path)
-          vb.customize ['createhd', 
-                       '--filename', disk_path,
-                       '--size', settings['nodes']['workers']['disk_size'],
-                       '--variant', 'Fixed']
-          
-          vb.customize ['storageattach', :id,
-                       '--storagectl', 'SATA Controller',
-                       '--port', 1,
-                       '--device', 0,
-                       '--type', 'hdd',
-                       '--medium', disk_path]
+          vb.customize ['createhd', '--filename', disk_path, '--size', settings['nodes']['workers']['disk_size'], '--variant', 'Fixed']
+          vb.customize ['storageattach', :id, '--storagectl', 'SATA Controller', '--port', 1, '--device', 0, '--type', 'hdd', '--medium', disk_path]
         end
       end
 
@@ -179,8 +168,7 @@ Vagrant.configure('2') do |config|
         },
         path: 'scripts/common.sh'
 
-      worker.vm.provision 'shell',
-        path: 'scripts/node.sh'
+      worker.vm.provision 'shell', path: 'scripts/node.sh'
     end
   end
 
