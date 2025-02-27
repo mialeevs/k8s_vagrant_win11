@@ -2,7 +2,6 @@
 cluster_name: Kubernetes-VBox-Cluster
 environment: production
 
-
 network:
   dns_servers:
     - 9.9.9.11
@@ -12,8 +11,7 @@ network:
   control_ip: 192.168.1.100
   worker_ip_prefix: 192.168.1
   private_ip_prefix: 172.16.0
-  bridge_interface: 'Ethernet' # Need to remove
-  netmask: '255.255.255.0'
+  netmask: "255.255.255.0"
 
 nodes:
   control:
@@ -21,7 +19,7 @@ nodes:
     memory: 6144
     disk_size: 20480
   workers:
-    count: 2
+    count: 1
     cpu: 4
     memory: 6144
     disk_size: 20480
@@ -40,7 +38,7 @@ shared_folders:
     vm_path: /vagrant/configs
     owner: vagrant
     group: vagrant
-    mount_options: 
+    mount_options:
       - dmode=750
       - fmode=640
 

@@ -68,7 +68,7 @@ Vagrant.configure('2') do |config|
 
   # Disable default shared folder
   config.vm.synced_folder '.', '/vagrant', disabled: true
-  
+
   # Secure shared folder configuration
   config.vm.synced_folder './configs', '/vagrant/configs',
     owner: 'vagrant',
@@ -79,11 +79,10 @@ Vagrant.configure('2') do |config|
   # Control plane node configuration
   config.vm.define 'control-plane', primary: true do |control|
     control.vm.hostname = 'control-node'
-    
+
     # Network configuration
     control.vm.network 'public_network',
       ip: settings['network']['control_ip'],
-      bridge: settings['network']['bridge_interface'],
       netmask: settings['network']['netmask'],
       nic_type: 'virtio'
 
@@ -91,7 +90,7 @@ Vagrant.configure('2') do |config|
       ip: "#{settings['network']['private_ip_prefix']}.10",
       virtualbox__intnet: 'cluster_internal',
       nic_type: 'virtio'
-    
+
     # VirtualBox provider settings
     control.vm.provider 'virtualbox' do |vb|
       vb.memory = settings['nodes']['control']['memory']
@@ -135,7 +134,6 @@ Vagrant.configure('2') do |config|
       # Network configuration
       worker.vm.network 'public_network',
         ip: "#{settings['network']['worker_ip_prefix']}.#{i + 10}",
-        bridge: settings['network']['bridge_interface'],
         netmask: settings['network']['netmask'],
         nic_type: 'virtio'
 
