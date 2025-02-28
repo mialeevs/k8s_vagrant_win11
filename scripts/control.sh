@@ -175,11 +175,38 @@ EOF
    chmod +x /vagrant/configs/join.sh
 }
 
+install_tools(){
+  sudo apt-get install unzip -y
+  curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+  unzip awscliv2.zip
+  sudo ./aws/install --update
+  rm -rf awscliv2.zip
+  rm -rf aws
+  sleep 5
+  curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
+  chmod 700 get_helm.sh
+  ./get_helm.sh
+  rm get_helm.sh
+  wget https://github.com/argoproj/argo-cd/releases/download/v2.13.2/argocd-linux-amd64
+  sudo install -m 555 argocd-linux-amd64 /usr/local/bin/argocd
+  rm argocd-linux-amd64
+}
+
+install_argocd(){
+  kubectl create namespace argocd
+  kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/v2.13.2/manifests/install.yaml
+  kubectl patch svc argocd-server -n argocd -p '{"spec":{"type":"NodePort"}}'
+  kubectl patch svc argocd-server -n argocd --type='json' -p='[{"op": "replace", "path": "/spec/ports/0/nodePort", "value": 30903}]'
+  kubectl patch svc argocd-server -n argocd --type='json' -p='[{"op": "replace", "path": "/spec/ports/1/nodePort", "value": 30904}]'
+}
+
 }
 main() {
    log "INFO" "Starting control plane setup..."
    initialize_control_plane
    install_calico
+   install_tools
+   install_argocd
    log "INFO" "Control plane setup completed successfully"
 }
 

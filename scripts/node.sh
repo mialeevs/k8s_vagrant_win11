@@ -45,26 +45,26 @@ trap 'error_handler $? $LINENO "$BASH_COMMAND"' ERR
 # Cleanup function for failure scenarios
 cleanup_on_failure() {
     log "INFO" "Performing cleanup after failure..."
-    
+
     # Reset Kubernetes components
     if command -v kubeadm >/dev/null 2>&1; then
         kubeadm reset -f || true
     fi
-    
+
     # Clean up network configurations
     rm -rf /etc/cni/net.d/* || true
-    
+
     # Reset containerd and CRI-O
     for service in containerd crio; do
         if systemctl is-active ${service} >/dev/null 2>&1; then
             systemctl stop ${service} || true
         fi
     done
-    
+
     # Reset iptables
     iptables -F || true
     iptables -t nat -F || true
-    
+
     # Clean up network interfaces
     for iface in cni0 flannel.1 calico.1; do
         if ip link show "${iface}" >/dev/null 2>&1; then
@@ -76,33 +76,33 @@ cleanup_on_failure() {
 # System requirements verification
 verify_system_requirements() {
     log "INFO" "Verifying system requirements..."
-    
+
     # Define minimum requirements
     local min_memory=4096  # 4GB in MB
     local min_cpu=2
     local min_disk=20      # Reduced to 20GB to match available resources
-    
+
     # Get available resources
     local available_memory=$(free -m | awk '/^Mem:/{print $2}')
     local available_cpu=$(nproc)
     local available_disk=$(df -BG / | awk 'NR==2 {print $4}' | sed 's/G//')
-    
+
     # Check requirements
     if [ "${available_memory}" -lt "${min_memory}" ]; then
         log "ERROR" "Insufficient memory: ${available_memory}MB < ${min_memory}MB required"
         exit 1
     fi
-    
+
     if [ "${available_cpu}" -lt "${min_cpu}" ]; then
         log "ERROR" "Insufficient CPU cores: ${available_cpu} < ${min_cpu} required"
         exit 1
     fi
-    
+
     if [ "${available_disk}" -lt "${min_disk}" ]; then
         log "ERROR" "Insufficient disk space: ${available_disk}GB < ${min_disk}GB required"
         exit 1
     fi
-    
+
 
     # Verify kernel modules
     local required_modules=(
@@ -125,7 +125,7 @@ verify_system_requirements() {
 # System optimization
 optimize_system() {
     log "INFO" "Applying system optimizations..."
-    
+
     # Kernel parameters optimization
     cat <<EOF | sudo tee /etc/sysctl.d/99-kubernetes-worker.conf
 # Network optimizations
@@ -180,10 +180,10 @@ EOF
 
 join_cluster() {
     log "INFO" "Joining the Kubernetes cluster..."
-    
+
     # Full path to join script
     local join_script="${CONFIG_PATH}/join.sh"
-    
+
     # Check if join script exists
     if [ ! -f "$join_script" ]; then
         log "ERROR" "Join script not found at ${join_script}"
@@ -207,17 +207,17 @@ join_cluster() {
 
 setup_monitoring() {
     log "INFO" "Setting up node monitoring..."
-    
+
     local NODE_EXPORTER_VERSION="1.8.2"
-    
+
     wget -q "https://github.com/prometheus/node_exporter/releases/download/v${NODE_EXPORTER_VERSION}/node_exporter-${NODE_EXPORTER_VERSION}.linux-amd64.tar.gz" \
         -O "${TEMP_DIR}/node_exporter.tar.gz"
-    
+
     tar xf "${TEMP_DIR}/node_exporter.tar.gz" -C "${TEMP_DIR}"
     mv "${TEMP_DIR}/node_exporter-${NODE_EXPORTER_VERSION}.linux-amd64/node_exporter" /usr/local/bin/
-    
+
     useradd -rs /bin/false node_exporter || true
-    
+
     cat <<EOF | tee /etc/systemd/system/node_exporter.service
 [Unit]
 Description=Node Exporter
@@ -240,7 +240,7 @@ EOF
 verify_node_health() {
     log "INFO" "Verifying node health status..."
     sleep 30
-    
+
     local elapsed=0
     local health_url="http://localhost:10248/healthz"
     local timeout=300
@@ -260,17 +260,16 @@ verify_node_health() {
     return 1
 }
 
-
 # Main execution
 main() {
     log "INFO" "Starting worker node setup..."
-    
+
     verify_system_requirements
     optimize_system
     join_cluster
     setup_monitoring
     verify_node_health
-    
+
     log "INFO" "Worker node setup completed successfully"
 }
 

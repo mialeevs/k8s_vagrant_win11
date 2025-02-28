@@ -76,3 +76,6 @@ monitoring:
   enable_prometheus: true
   retention_days: 15
   scrape_interval: 15s
+
+devops_tools:
+  install_argo: true
