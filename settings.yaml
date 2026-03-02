@@ -1,75 +1,25 @@
----
 cluster_name: Kubernetes-VBox-Cluster
-environment: production
-
 
 network:
-  dns_servers:
-    - 9.9.9.11
-    - 1.1.1.1
   pod_cidr: 10.244.0.0/16
   service_cidr: 10.96.0.0/12
   control_ip: 192.168.1.100
   worker_ip_prefix: 192.168.1
   private_ip_prefix: 172.16.0
-  bridge_interface: 'eth0'
-  netmask: '255.255.255.0'
+  dns_servers: "9.9.9.9,1.1.1.1"
 
 nodes:
   control:
     cpu: 4
     memory: 6144
-    disk_size: 20480
   workers:
     count: 2
     cpu: 4
     memory: 6144
-    disk_size: 20480
 
 software:
   box: bento/ubuntu-24.04
-  calico: 3.28.2
-  kubernetes: v1.30
+  calico: 3.30.0
+  kubernetes: v1.34
   os: xUbuntu_24.04
-  crio: v1.30
-  node_exporter: 1.8.2
-  containerd: 2.0.2
-
-shared_folders:
-  - host_path: ./configs
-    vm_path: /vagrant/configs
-    owner: vagrant
-    group: vagrant
-    mount_options: 
-      - dmode=750
-      - fmode=640
-
-vm_options:
-  vbox_guest_additions: true
-  enable_hyperv_features: true
-  enable_nested_virtualization: true
-  memory_balloon: false
-  page_fusion: false
-  
-security:
-  disable_usb: true
-  disable_audio: true
-  disable_clipboard: true
-  network_promiscuous: deny
-  shared_folders_mode: restricted
-  selinux_enabled: true
-  seccomp_enabled: true
-  apparmor_enabled: true
-  audit_logging: true
-  encryption:
-    etcd: true
-    secrets: true
-  network_policies: true
-  pod_security_standards: restricted
-
-monitoring:
-  enable_metrics_server: true
-  enable_node_exporter: true
-  enable_prometheus: true
-  retention_days: 15
-  scrape_interval: 15s
+  crio: v1.33

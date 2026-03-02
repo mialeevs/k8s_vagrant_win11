@@ -83,7 +83,7 @@ initialize_control_plane() {
    log "INFO" "Initializing control plane..."
 
    cat <<EOF > "$TEMP_DIR/kubeadm-config.yaml"
-apiVersion: kubeadm.k8s.io/v1beta3
+apiVersion: kubeadm.k8s.io/v1beta4
 kind: InitConfiguration
 localAPIEndpoint:
  advertiseAddress: "${CONTROL_IP}"
@@ -92,7 +92,7 @@ nodeRegistration:
  criSocket: "unix:///var/run/crio/crio.sock"
  imagePullPolicy: IfNotPresent
 ---
-apiVersion: kubeadm.k8s.io/v1beta3
+apiVersion: kubeadm.k8s.io/v1beta4
 kind: ClusterConfiguration
 networking:
  serviceSubnet: "${SERVICE_CIDR}"

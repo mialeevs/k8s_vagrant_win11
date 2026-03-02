@@ -1,36 +1,35 @@
-# Kubernetes Installation on Ubuntu 22.04 with VAGRANT
+# Kubernetes Installation on Ubuntu 24.04 with Vagrant
 
 ## For Linux OS / Windows 10/11 OS
 
-### Install VMware Workstation(VMware destop plugin) ,Vagrant and Git
+### Prerequisites
 
-Install VMWare, Vagrant and Git on the laptop or PC
+Install VirtualBox, Vagrant and Git on your system:
 
-> [VMWare Workstation](https://access.broadcom.com/default/ui/v1/signin/)
+- [VirtualBox](https://www.virtualbox.org/wiki/Downloads)
+- [Vagrant](https://www.vagrantup.com/)
+- [Git](https://git-scm.com/)
 
-> [Vagrant](https://www.vagrantup.com/)
+### Setup
 
-> [GIT](https://git-scm.com/)
-
-> [VMWare Desktop Plugin](https://developer.hashicorp.com/vagrant/docs/providers/vmware/vagrant-vmware-utility)
-
-
-Install the required plugins for vmwaredesktop
-
-```bash
-vagrant plugin install vagrant-vmware-desktop
-vagrant plugin install vagrant-hostmanager
-```
-
-### Clone the repository
-
-Clone the repo to the desired location
-
+1. Clone the repository:
 ```bash
 git clone https://github.com/mialeevs/kube_vagrant.git
 cd kube_vagrant
+```
 
-# Update the settings.yaml file for desired worker node count and run below command.
-# Update the same file for memory and cpu allocation for the cp and worker nodes as needed.
+2. Configure your cluster by editing `settings.yaml`:
+   - Adjust worker node count
+   - Modify CPU/memory allocation
+   - Update network settings if needed
+
+3. Start the cluster:
+```bash
 vagrant up
+```
+
+4. Access the control plane:
+```bash
+vagrant ssh control-plane
+kubectl get nodes
 ```
