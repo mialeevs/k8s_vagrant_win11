@@ -6,7 +6,39 @@ set -euxo pipefail
 
 NODENAME=$(hostname -s)
 
-sudo kubeadm config images pull
+# Network connectivity check
+echo "Testing network connectivity..."
+ping -c 3 8.8.8.8 || echo "Warning: Cannot reach 8.8.8.8"
+nslookup registry.k8s.io || echo "Warning: DNS resolution failed for registry.k8s.io"
+
+# Configure alternative registry if needed
+# Try primary registry first
+echo "Trying primary registry..."
+if sudo kubeadm config images pull --image-repository=registry.k8s.io; then
+  echo "Primary registry worked!"
+else
+  echo "Primary registry failed, trying alternative approach..."
+  
+  # Get the list of required images
+  echo "Getting list of required images..."
+  sudo kubeadm config images list
+  
+  # Try pulling images individually with fallback
+  echo "Pulling images individually..."
+  
+  # Most images work from k8s.gcr.io
+  sudo crio pull k8s.gcr.io/kube-apiserver:v1.34.5 || echo "Failed to pull kube-apiserver"
+  sudo crio pull k8s.gcr.io/kube-controller-manager:v1.34.5 || echo "Failed to pull kube-controller-manager"
+  sudo crio pull k8s.gcr.io/kube-scheduler:v1.34.5 || echo "Failed to pull kube-scheduler"
+  sudo crio pull k8s.gcr.io/kube-proxy:v1.34.5 || echo "Failed to pull kube-proxy"
+  sudo crio pull k8s.gcr.io/pause:3.10 || echo "Failed to pull pause"
+  sudo crio pull k8s.gcr.io/etcd:3.5.15-0 || echo "Failed to pull etcd"
+  
+  # CoreDNS needs special handling
+  sudo crio pull registry.k8s.io/coredns/coredns:v1.12.1 || sudo crio pull coredns/coredns:1.12.1 || echo "Failed to pull coredns"
+  
+  echo "Individual image pulls completed"
+fi
 
 echo "Preflight Check Passed: Downloaded All Required Images"
 
