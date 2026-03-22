@@ -24,4 +24,4 @@ software:
   dashboard: 
   kubernetes: v1.34
   os: xUbuntu_22.04
-  crio: v1.32
+  crio: v1.35
