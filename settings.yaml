@@ -4,7 +4,7 @@ cluster_name: Kubernetes Cluster
 environment: development
 network:
   dns_servers:
-    - 9.9.9.9
+    - 8.8.8.8
     - 1.1.1.1
   pod_cidr: 10.244.0.0/16
   service_cidr: 10.96.0.0/12
@@ -24,4 +24,4 @@ software:
   dashboard: 
   kubernetes: v1.34
   os: xUbuntu_22.04
-  crio: v1.32
+  crio: v1.35
