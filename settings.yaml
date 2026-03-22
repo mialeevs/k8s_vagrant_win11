@@ -6,7 +6,7 @@ network:
   control_ip: 192.168.1.100
   worker_ip_prefix: 192.168.1
   private_ip_prefix: 172.16.0
-  dns_servers: "9.9.9.9,1.1.1.1"
+  dns_servers: "8.8.8.8,1.1.1.1"
 
 nodes:
   control:
@@ -22,4 +22,4 @@ software:
   calico: 3.30.0
   kubernetes: v1.34
   os: xUbuntu_24.04
-  crio: v1.33
+  crio: v1.35
