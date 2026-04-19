@@ -4,6 +4,8 @@
 
 set -euxo pipefail
 
+TEMP_DIR="/tmp"
+
 NODENAME=$(hostname -s)
 
 # Network connectivity check
@@ -77,6 +79,11 @@ wget https://get.helm.sh/helm-v3.12.1-linux-amd64.tar.gz
 tar xvf helm-*-linux-amd64.tar.gz
 sudo mv linux-amd64/helm /usr/local/bin
 
+# ArgoCD CLI
+wget -q https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64 -O "${TEMP_DIR}/argocd"
+sudo install -m 755 "${TEMP_DIR}/argocd" /usr/local/bin/argocd
+rm "${TEMP_DIR}/argocd"
+
 sudo -i -u vagrant bash << EOF
 whoami
 mkdir -p /home/vagrant/.kube
@@ -90,4 +97,10 @@ cd kubernetes_installation_crio/
 kubectl apply -f metrics-server.yaml
 cd
 rm -rf kubernetes_installation_crio/
+
+kubectl create namespace argocd || true
+kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/v2.13.2/manifests/install.yaml
+kubectl patch svc argocd-server -n argocd -p '{"spec":{"type":"NodePort"}}'
+kubectl patch svc argocd-server -n argocd --type='json' \
+    -p='[{"op":"replace","path":"/spec/ports/0/nodePort","value":30903},{"op":"replace","path":"/spec/ports/1/nodePort","value":30904}]'
 

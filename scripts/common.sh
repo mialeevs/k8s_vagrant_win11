@@ -47,12 +47,12 @@ EOF
 
 sudo sysctl --system
 
-sudo apt-get install -y apt-transport-https ca-certificates curl gnupg2 software-properties-common
+sudo mkdir -p /etc/apt/keyrings
+curl -fsSL "https://download.opensuse.org/repositories/isv:/cri-o:/stable:/$CRIO_VERSION/deb/Release.key" \
+  | sudo gpg --dearmor -o /etc/apt/keyrings/cri-o-apt-keyring.gpg
 
-sudo curl -fsSL https://pkgs.k8s.io/addons:/cri-o:/stable:/$CRIO_VERSION/deb/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/cri-o-apt-keyring.gpg
-
-sudo echo "deb [signed-by=/etc/apt/keyrings/cri-o-apt-keyring.gpg] https://pkgs.k8s.io/addons:/cri-o:/stable:/$CRIO_VERSION/deb/ /" | sudo tee /etc/apt/sources.list.d/cri-o.list
-
+echo "deb [signed-by=/etc/apt/keyrings/cri-o-apt-keyring.gpg] https://download.opensuse.org/repositories/isv:/cri-o:/stable:/$CRIO_VERSION/deb/ /" \
+  | sudo tee /etc/apt/sources.list.d/cri-o.list
 
 sudo apt-get update -y
 sudo apt-get install cri-o -y
