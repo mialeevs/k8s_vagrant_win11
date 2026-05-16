@@ -6,6 +6,12 @@ set -euxo pipefail
 
 TEMP_DIR="/tmp"
 
+export CALICO_VERSION
+export CRIO_VERSION
+export CONTROL_IP
+export POD_CIDR
+export SERVICE_CIDR
+
 NODENAME=$(hostname -s)
 
 # Network connectivity check
@@ -75,9 +81,11 @@ curl https://raw.githubusercontent.com/projectcalico/calico/v${CALICO_VERSION}/m
 kubectl apply -f calico.yaml
 
 # Install helm (required for cilium)
-wget https://get.helm.sh/helm-v3.12.1-linux-amd64.tar.gz
-tar xvf helm-*-linux-amd64.tar.gz
-sudo mv linux-amd64/helm /usr/local/bin
+sudo apt-get install curl gpg apt-transport-https --yes
+curl -fsSL https://packages.buildkite.com/helm-linux/helm-debian/gpgkey | gpg --dearmor | sudo tee /usr/share/keyrings/helm.gpg > /dev/null
+echo "deb [signed-by=/usr/share/keyrings/helm.gpg] https://packages.buildkite.com/helm-linux/helm-debian/any/ any main" | sudo tee /etc/apt/sources.list.d/helm-stable-debian.list
+sudo apt-get update -y
+sudo apt-get install helm -y
 
 # ArgoCD CLI
 wget -q https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64 -O "${TEMP_DIR}/argocd"
@@ -99,7 +107,10 @@ cd
 rm -rf kubernetes_installation_crio/
 
 kubectl create namespace argocd || true
-kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/v2.13.2/manifests/install.yaml
+
+# Download ArgoCD manifest
+kubectl create namespace argocd || true
+kubectl apply -n argocd --server-side --force-conflicts -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
 kubectl patch svc argocd-server -n argocd -p '{"spec":{"type":"NodePort"}}'
 kubectl patch svc argocd-server -n argocd --type='json' \
     -p='[{"op":"replace","path":"/spec/ports/0/nodePort","value":30903},{"op":"replace","path":"/spec/ports/1/nodePort","value":30904}]'

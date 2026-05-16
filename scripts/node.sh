@@ -5,7 +5,7 @@ set -euxo pipefail
 
 config_path="/vagrant/configs"
 
-/bin/bash $config_path/join.sh -v
+bash $config_path/join.sh
 
 sudo -i -u vagrant bash << EOF
 whoami

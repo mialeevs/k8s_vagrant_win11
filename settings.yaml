@@ -25,3 +25,4 @@ software:
   kubernetes: v1.34
   os: xUbuntu_22.04
   crio: v1.35
+shared_folders: []

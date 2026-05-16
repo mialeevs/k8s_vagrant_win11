@@ -7,6 +7,11 @@ set -euxo pipefail
 
 
 # Variable Declaration
+export DNS_SERVERS
+export KUBERNETES_VERSION
+export CRIO_VERSION
+export ENVIRONMENT
+export OS
 
 # DNS Setting
 if [ ! -d /etc/systemd/resolved.conf.d ]; then
