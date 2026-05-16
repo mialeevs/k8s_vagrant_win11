@@ -1,0 +1,25 @@
+# Vagrant-specific ignores
+# Local Vagrant machine state (do NOT commit)
+.vagrant/
+
+# Local box files
+*.box
+
+# Vagrant-created SSH private keys (sensitive)
+.vagrant/machines/*/virtualbox/private_key
+.vagrant/machines/*/libvirt/private_key
+.vagrant/machines/*/docker/private_key
+
+# Common private certs/keys
+*.pem
+*.key
+
+# Temporary files and logs created during provisioning
+*.log
+tmp/
+
+# Optional: ignore IDE/editor project files (uncomment if desired)
+# .vscode/
+# .idea/
+# *.suo
+# *.user
